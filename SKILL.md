@@ -1,4 +1,4 @@
-﻿---
+---
 name: take-rate-risk-cohorts
 description: Runs multi-cohort
 ---
