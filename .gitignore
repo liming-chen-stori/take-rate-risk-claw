@@ -1,0 +1,23 @@
+# Secrets — never commit
+Cred_RS.json
+**/Cred_RS.json
+.env
+.env.*
+
+# Outputs
+take_rate_risk/output/
+**/output/*.csv
+**/output/*.xlsx
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

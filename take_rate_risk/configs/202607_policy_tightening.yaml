@@ -1,0 +1,24 @@
+# July 2026 policy tightening — xs-first-loan
+# New_Policy vs Previous_Policy; Test Policy excluded (not in either cohort)
+
+run_name: 202607_policy_tightening
+description: "July 2026 xs-first-loan — New Policy Jul2026 vs Previous Policy (exclude Test)"
+
+booking_window_days: 60
+payweeks: [4, 8, 12, 16, 20, 24]
+min_a0: 30
+min_loan_amount: 500
+offer_ordinal_scope: within_cohort
+
+shared_where:
+  - "o.lead_segment = 'xs-first-loan'"
+  - "o.offer_creation_dt >= '2026-07-01'"
+  - "o.policy_dcsn_note NOT LIKE '%X-Sell Test Policy%'"
+
+cohorts:
+  - name: "New_Policy"
+    where:
+      - "o.policy_dcsn_note LIKE '%X-Sell New Policy Jul2026%'"
+  - name: "Previous_Policy"
+    where:
+      - "o.policy_dcsn_note LIKE '%X-Sell Previous Policy%'"

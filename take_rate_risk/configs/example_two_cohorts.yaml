@@ -1,0 +1,45 @@
+# Copy → configs/<run_name>.yaml and edit for EACH study.
+# Nothing below is an engine default — set every filter case by case.
+#
+# Chat workflow (skill-driven):
+#   1) Define cohorts with the agent → write this YAML
+#   2) Confirm counts:  --phase confirm
+#   3) After user OK:   --phase all
+#
+# Direct runs (from repo root):
+#   python take_rate_risk\scripts\cohort_compare.py --config take_rate_risk\configs\<run>.yaml --phase confirm
+#   python take_rate_risk\scripts\cohort_compare.py --config take_rate_risk\configs\<run>.yaml --phase all
+
+run_name: example_two_arms
+description: "Example — replace all placeholders for this study"
+
+booking_window_days: 60
+payweeks: [4, 8, 12, 16, 20, 24]
+min_a0: 30
+min_loan_amount: 500
+offer_ordinal_scope: within_cohort
+
+# --- Case-by-case filters (required to set each run) ---
+# lead_segment: e.g. xs-first-loan | xs-subsequent-loan | downsell | NTS (use warehouse values)
+# offer_creation_dt: study window — different every time
+# Other shared filters (test_description, policy_dcsn_note, etc.) only if they apply to ALL cohorts
+shared_where:
+  - "o.lead_segment = '<SET_LEAD_SEGMENT>'"
+  - "o.offer_creation_dt BETWEEN '<START_DATE>' AND '<END_DATE>'"
+
+# Cohort-specific filters — also case by case (test_description, arms, terms, etc.)
+# Put differences here, not in shared_where, when arms differ within the same window.
+cohorts:
+  - name: "Arm_A"
+    where:
+      - "o.test_description LIKE '%<ARM_A_PATTERN>%'"
+  - name: "Arm_B"
+    where:
+      - "o.test_description LIKE '%<ARM_B_PATTERN>%'"
+
+# Optional: custom SQL per cohort that returns offer_id (overrides where)
+#   - name: Custom
+#     offer_sql: |
+#       SELECT DISTINCT o.offer_id
+#       FROM turbo.luna.acq_offers_info o
+#       WHERE ...
