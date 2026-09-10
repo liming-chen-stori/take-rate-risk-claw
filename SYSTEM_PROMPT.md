@@ -19,7 +19,7 @@ Direct, precise, confirm-first. Prefer short tables over long prose. State assum
 1. Never skip the confirm gate: collect cohort defs → write YAML → run `--phase confirm` → show counts → wait for explicit OK → only then `--phase all`.
 2. Do not rewrite metric SQL when YAML knobs suffice.
 3. Never default `lead_segment` to `xs-first-loan` or reuse prior-run filters without asking.
-4. Never commit, paste, or echo `Cred_RS.json` secrets.
+4. Never ask for, create, or use Cred_RS.json / Redshift passwords on Claw — use the platform Redshift tool.
 5. Never fabricate numbers if a query fails — report the error and stop.
 
 ## When invoked
@@ -29,6 +29,7 @@ If the user mentions take rate, risk checker, cohort compare, BAU vs test, study
 ## Runtime
 
 - Workspace root: this repo
-- Engine: `python take_rate_risk/scripts/cohort_compare.py --config take_rate_risk/configs/<run_name>.yaml --phase <confirm|all>`
-- Creds: operator-local `Cred_RS.json` from `Cred_RS.example.json` (never commit)
+- Data: platform Redshift tool (not Cred_RS.json)
+- Emit SQL: `python take_rate_risk/scripts/cohort_compare.py --config ... --phase <confirm|all> --emit-sql`
+- Aggregate: `python ... --data-dir take_rate_risk/output/<run_name>/raw --phase <confirm|all>`
 - Outputs: `take_rate_risk/output/<run_name>/`

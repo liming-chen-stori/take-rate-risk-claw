@@ -4,29 +4,44 @@ Local conventions for this workspace. Guidance only — does not enable/disable 
 
 ## Working directory
 
-Always treat the repo root as cwd:
+Always treat the repo root as cwd.
 
-```
-take-rate-risk-claw/
-```
+## Redshift (Claw platform tool)
 
-## Python engine
+**Primary data path on Claw:** use the platform **Redshift tool** (execute-query / export).  
+**Do not** use `Cred_RS.json` or ask for warehouse passwords.
+
+### Emit SQL (Python, no DB)
 
 ```powershell
-pip install -r requirements.txt
-
 python take_rate_risk\scripts\cohort_compare.py `
   --config take_rate_risk\configs\<run_name>.yaml `
-  --phase confirm
+  --phase confirm `
+  --emit-sql
+```
 
+SQL → `take_rate_risk/output/<run_name>/sql/`
+
+### Run + export
+
+1. Execute each `.sql` with the platform Redshift tool.
+2. Export CSVs into `take_rate_risk/output/<run_name>/raw/` as:
+   - `confirm.csv`
+   - `offers_detail.csv`
+   - `risk_raw.csv`
+
+### Aggregate (Python, no DB)
+
+```powershell
 python take_rate_risk\scripts\cohort_compare.py `
   --config take_rate_risk\configs\<run_name>.yaml `
-  --phase all
+  --phase all `
+  --data-dir take_rate_risk\output\<run_name>\raw
 ```
 
 Phases: `confirm` | `offers` | `take_rate` | `loan_terms` | `risk` | `all`
 
-Supporting module: `take_rate_risk/scripts/wiki_metrics.py` (imported by the engine — do not call alone unless debugging).
+Supporting module: `take_rate_risk/scripts/wiki_metrics.py` (imported by the engine).
 
 ## Config files
 
@@ -36,13 +51,12 @@ Supporting module: `take_rate_risk/scripts/wiki_metrics.py` (imported by the eng
 
 ## Credentials
 
-- Template only in git: `Cred_RS.example.json`
-- Operator creates local `Cred_RS.json` (gitignored) or sets `CRED_RS_PATH`
-- Never print password fields
+- **Claw:** none — Redshift tool handles auth.
+- **Local optional only:** `--use-creds` + `Cred_RS.example.json` → `Cred_RS.json` (gitignored). Never on Claw.
 
 ## Outputs
 
-Write under `take_rate_risk/output/<run_name>/` (gitignored). Summarize in chat before pointing to files.
+`take_rate_risk/output/<run_name>/` (gitignored). Summarize in chat before pointing to files.
 
 ## Skill trigger
 

@@ -21,11 +21,15 @@ Skill path: `skills/take-rate-risk-cohorts/SKILL.md`
     scripts/cohort_compare.py
     scripts/wiki_metrics.py
     output/<run_name>/
-  Cred_RS.example.json
+  Cred_RS.example.json   # optional local --use-creds only; unused on Claw
   requirements.txt
 ```
 
 Package root = this folder. Run all Python from here.
+
+## Data access
+
+On Claw: **platform Redshift tool** only. Flow: `--emit-sql` → Redshift tool → CSV exports → `--data-dir`. Never Cred_RS.json on Claw.
 
 ## Operating priorities
 

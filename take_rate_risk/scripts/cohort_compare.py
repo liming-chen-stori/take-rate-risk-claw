@@ -9,14 +9,19 @@ Phases:
   risk        — A0,A2,B2,RR1,RR2,GACO,ROA,GM by payweek (A0 >= min_a0)
   all         — confirm tables + offers + take_rate + loan_terms + risk + Excel
 
-Usage:
-  python cohort_compare.py --config ../configs/my_run.yaml --phase confirm
-  python cohort_compare.py --config ../configs/my_run.yaml --phase all
+Usage (Claw / platform Redshift tool — preferred):
+  python cohort_compare.py --config ../configs/my_run.yaml --phase confirm --emit-sql
+  # run the emitted .sql via the platform Redshift tool → export CSVs into --data-dir
+  python cohort_compare.py --config ../configs/my_run.yaml --phase confirm --data-dir ../output/my_run/raw
+
+Usage (optional local Cred_RS.json fallback):
+  python cohort_compare.py --config ../configs/my_run.yaml --phase confirm --use-creds
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -24,7 +29,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import psycopg2
 import yaml
 from openpyxl import Workbook
 from openpyxl.formatting.rule import ColorScaleRule
@@ -32,25 +36,18 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent.parent  # .../202608_BuildSkills
+REPO_ROOT = SCRIPT_DIR.parent.parent
 ENGINE_ROOT = SCRIPT_DIR.parent       # .../take_rate_risk
 sys.path.insert(0, str(SCRIPT_DIR))
 from wiki_metrics import derive_wiki_metrics  # noqa: E402
 
-
-def _resolve_creds_path() -> Path:
-    """Prefer env override, then repo-root Cred_RS.json. Never commit secrets."""
-    import os
-
-    env = os.environ.get("CRED_RS_PATH") or os.environ.get("TAKE_RATE_RISK_CREDS")
-    if env:
-        return Path(env)
-    return REPO_ROOT / "Cred_RS.json"
-
-
-CREDS = _resolve_creds_path()
 ROOT = ENGINE_ROOT
 DEFAULT_OUT = ROOT / "output"
+
+# CSV names expected when using --data-dir (filled by platform Redshift tool export)
+RAW_CONFIRM = "confirm.csv"
+RAW_OFFERS = "offers_detail.csv"
+RAW_RISK = "risk_raw.csv"
 
 HEADER_FILL = PatternFill("solid", fgColor="0070C0")
 HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -125,17 +122,33 @@ def load_config(path: Path) -> dict[str, Any]:
     return cfg
 
 
+def _resolve_creds_path() -> Path:
+    env = os.environ.get("CRED_RS_PATH") or os.environ.get("TAKE_RATE_RISK_CREDS")
+    if env:
+        return Path(env)
+    return REPO_ROOT / "Cred_RS.json"
+
+
 def connect():
-    if not CREDS.is_file():
+    """Optional local fallback only (--use-creds). Prefer platform Redshift tool + --data-dir."""
+    try:
+        import psycopg2
+    except ImportError as e:
+        raise ImportError(
+            "psycopg2 is only needed for --use-creds. "
+            "On Claw, emit SQL and load CSVs via --data-dir instead."
+        ) from e
+
+    creds = _resolve_creds_path()
+    if not creds.is_file():
         raise FileNotFoundError(
-            "Redshift credentials not found.\n"
-            f"  Expected: {CREDS}\n"
-            "  1) Copy Cred_RS.example.json → Cred_RS.json at the repo root\n"
-            "  2) Fill in your Redshift username, password, host, port, database\n"
-            "  3) Or set env CRED_RS_PATH to your Cred_RS.json\n"
-            "  Do not commit Cred_RS.json."
+            "Local Cred_RS.json not found (optional fallback only).\n"
+            f"  Expected: {creds}\n"
+            "  On Claw: use --emit-sql, run SQL with the platform Redshift tool,\n"
+            "  export CSVs, then re-run with --data-dir.\n"
+            "  Local only: create Cred_RS.json or set CRED_RS_PATH, then --use-creds."
         )
-    r = json.loads(CREDS.read_text(encoding="utf-8"))["redshift"]
+    r = json.loads(creds.read_text(encoding="utf-8"))["redshift"]
     return psycopg2.connect(
         host=r["host"],
         port=r["port"],
@@ -152,6 +165,63 @@ def _sql_escape_pct(s: str) -> str:
 def read_sql(sql: str) -> pd.DataFrame:
     with connect() as conn:
         return pd.read_sql(_sql_escape_pct(sql), conn)
+
+
+def emit_sql_files(cfg: dict, sql_dir: Path, phase: str) -> dict[str, Path]:
+    """Write phase SQL for the platform Redshift tool. No DB connection."""
+    sql_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, Path] = {}
+    need_confirm = phase in ("confirm", "all")
+    need_detail = phase in ("offers", "take_rate", "loan_terms", "all")
+    need_risk = phase in ("risk", "all")
+
+    if need_confirm:
+        p = sql_dir / "confirm.sql"
+        p.write_text(sql_confirm(cfg).strip() + "\n", encoding="utf-8")
+        written["confirm"] = p
+    if need_detail:
+        p = sql_dir / "offers_detail.sql"
+        p.write_text(sql_offers_detail(cfg).strip() + "\n", encoding="utf-8")
+        written["offers_detail"] = p
+    if need_risk:
+        p = sql_dir / "risk.sql"
+        p.write_text(sql_risk(cfg).strip() + "\n", encoding="utf-8")
+        written["risk"] = p
+
+    print(f"\nEmitted SQL under {sql_dir}:")
+    for name, path in written.items():
+        print(f"  - {name}: {path}")
+    print(
+        "\nNext (Claw): run each .sql with the platform Redshift tool, "
+        f"export CSVs as {RAW_CONFIRM} / {RAW_OFFERS} / {RAW_RISK} into a data dir, "
+        "then re-run this script with --data-dir <that dir>."
+    )
+    return written
+
+
+def _load_csv(data_dir: Path, name: str) -> pd.DataFrame:
+    path = data_dir / name
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Missing {path}\n"
+            "Export the matching Redshift tool result to this CSV, then retry."
+        )
+    return pd.read_csv(path)
+
+
+def load_raw_frames(data_dir: Path, phase: str) -> dict[str, pd.DataFrame]:
+    """Load CSVs produced by the platform Redshift tool."""
+    out: dict[str, pd.DataFrame] = {}
+    need_confirm = phase in ("confirm", "all")
+    need_detail = phase in ("offers", "take_rate", "loan_terms", "all")
+    need_risk = phase in ("risk", "all")
+    if need_confirm:
+        out["confirm"] = _load_csv(data_dir, RAW_CONFIRM)
+    if need_detail:
+        out["detail"] = _load_csv(data_dir, RAW_OFFERS)
+    if need_risk:
+        out["risk_raw"] = _load_csv(data_dir, RAW_RISK)
+    return out
 
 
 def _shared_and(cfg: dict) -> str:
@@ -718,7 +788,14 @@ def _print_df(title: str, df: pd.DataFrame):
         print(df.to_string(index=False))
 
 
-def run(cfg: dict, phase: str, out_dir: Path) -> dict[str, pd.DataFrame]:
+def run(
+    cfg: dict,
+    phase: str,
+    out_dir: Path,
+    *,
+    data_dir: Path | None = None,
+    use_creds: bool = False,
+) -> dict[str, pd.DataFrame]:
     window = int(cfg["booking_window_days"])
     tables: dict[str, pd.DataFrame] = {}
 
@@ -726,8 +803,18 @@ def run(cfg: dict, phase: str, out_dir: Path) -> dict[str, pd.DataFrame]:
     need_confirm = phase in ("confirm", "all")
     need_risk = phase in ("risk", "all")
 
+    raw: dict[str, pd.DataFrame] = {}
+    if data_dir is not None:
+        raw = load_raw_frames(data_dir, phase)
+    elif not use_creds:
+        raise SystemExit(
+            "No data source.\n"
+            "  Claw (preferred): --emit-sql → Redshift tool → --data-dir <csv folder>\n"
+            "  Local fallback:   --use-creds (requires Cred_RS.json)"
+        )
+
     if need_confirm or phase == "confirm":
-        confirm = read_sql(sql_confirm(cfg))
+        confirm = raw["confirm"] if data_dir is not None else read_sql(sql_confirm(cfg))
         tables["confirm"] = confirm
         _print_df("1) Cohort confirmation (offers / loans / users)", confirm)
 
@@ -736,8 +823,12 @@ def run(cfg: dict, phase: str, out_dir: Path) -> dict[str, pd.DataFrame]:
 
     detail = None
     if need_detail:
-        print("\nPulling offer-level detail (may take a bit)...")
-        detail = read_sql(sql_offers_detail(cfg))
+        if data_dir is not None:
+            print("\nLoading offer-level detail from --data-dir...")
+            detail = raw["detail"]
+        else:
+            print("\nPulling offer-level detail (may take a bit)...")
+            detail = read_sql(sql_offers_detail(cfg))
         # sort helpers
         if "risk_band" in detail.columns:
             detail["_c"] = color_ord(detail["risk_band"])
@@ -792,9 +883,13 @@ def run(cfg: dict, phase: str, out_dir: Path) -> dict[str, pd.DataFrame]:
         _print_df("4) Loan terms by cohort", lt)
 
     if need_risk:
-        print("\nPulling risk aggregates...")
-        raw = read_sql(sql_risk(cfg))
-        risk = derive_risk(raw, cfg.get("min_a0", 30))
+        if data_dir is not None:
+            print("\nLoading risk aggregates from --data-dir...")
+            risk_src = raw["risk_raw"]
+        else:
+            print("\nPulling risk aggregates...")
+            risk_src = read_sql(sql_risk(cfg))
+        risk = derive_risk(risk_src, cfg.get("min_a0", 30))
         tables["risk"] = risk
         _print_df(f"5) Risk (A0 >= {cfg.get('min_a0', 30)})", risk)
 
@@ -820,6 +915,21 @@ def main():
         choices=["confirm", "offers", "take_rate", "loan_terms", "risk", "all"],
     )
     ap.add_argument("--out-dir", default=None, help="Output directory (default output/<run_name>)")
+    ap.add_argument(
+        "--emit-sql",
+        action="store_true",
+        help="Write phase SQL files for the platform Redshift tool; do not query",
+    )
+    ap.add_argument(
+        "--data-dir",
+        default=None,
+        help="Folder with confirm.csv / offers_detail.csv / risk_raw.csv from Redshift tool",
+    )
+    ap.add_argument(
+        "--use-creds",
+        action="store_true",
+        help="Optional local fallback: query Redshift via Cred_RS.json (not for Claw)",
+    )
     args = ap.parse_args()
 
     cfg_path = Path(args.config)
@@ -827,7 +937,18 @@ def main():
     out_dir = Path(args.out_dir) if args.out_dir else DEFAULT_OUT / cfg["run_name"]
     print(f"Run: {cfg['run_name']} | phase={args.phase}")
     print(f"Config: {cfg_path}")
-    run(cfg, args.phase, out_dir)
+
+    if args.emit_sql:
+        emit_sql_files(cfg, out_dir / "sql", args.phase)
+        return
+
+    data_dir = Path(args.data_dir) if args.data_dir else None
+    if data_dir is None and not args.use_creds:
+        raise SystemExit(
+            "Specify --emit-sql, or --data-dir <csvs from Redshift tool>, "
+            "or --use-creds for local Cred_RS.json."
+        )
+    run(cfg, args.phase, out_dir, data_dir=data_dir, use_creds=args.use_creds)
 
 
 if __name__ == "__main__":
