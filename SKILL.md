@@ -1,4 +1,4 @@
-﻿---
+---
 name: take-rate-risk-cohorts
 description: Runs multi-cohort Luna take-rate and risk analysis with a confirm-first gate. Compares offer mix (date, offer times 1/2/3/4+, risk band), take rate by offer times and risk band, loan-term similarity (limit, tenor, payment frequency), and risk metrics (A0, A2, B2, RR1, RR2, GACO, ROA, GM) by payweek when A0 is large enough. Use when the user asks for take rate, risk checker, cohort compare, BAU vs test, study vs control, offer balance, or Luna offer performance across arms (xsell first/subsequent, downsell, new-to-stori, etc.).
 ---
